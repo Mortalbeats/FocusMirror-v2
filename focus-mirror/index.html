@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Focus Mirror — Desk Presence</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #050505;
+    color: #f5f0e6;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+  }
+  main {
+    width: 100%;
+    max-width: 560px;
+    padding: 48px 24px 64px;
+    text-align: center;
+  }
+  .clock {
+    position: fixed;
+    top: 20px;
+    right: 28px;
+    font-size: 28px;
+    font-weight: 300;
+    letter-spacing: 2px;
+    color: #8a8578;
+  }
+  h1 {
+    font-weight: 300;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    font-size: 20px;
+    color: #c9b98a;
+    margin-bottom: 36px;
+  }
+  .status-card {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    text-align: left;
+    background: #101010;
+    border: 1px solid #262626;
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-bottom: 16px;
+  }
+  .dot {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #555;
+  }
+  .dot.on  { background: #4ade80; box-shadow: 0 0 18px #4ade80aa; }
+  .dot.off { background: #f87171; box-shadow: 0 0 18px #f87171aa; }
+  .dot.unknown { background: #777; }
+  .status-text { font-size: 24px; font-weight: 600; }
+  .status-sub  { font-size: 14px; color: #8a8578; margin-top: 4px; }
+  .distance { color: #8a8578; font-size: 15px; margin-bottom: 40px; }
+
+  .timer { margin-bottom: 40px; }
+  .time {
+    font-size: 84px;
+    font-weight: 200;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 4px;
+  }
+  .timer-state { color: #c9b98a; font-size: 15px; margin: 8px 0 20px; min-height: 20px; }
+  .timer-controls { display: flex; gap: 12px; justify-content: center; }
+
+  button {
+    background: transparent;
+    color: #f5f0e6;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 12px 24px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  button:hover { border-color: #c9b98a; background: #161616; }
+  button.primary { border-color: #c9b98a; color: #c9b98a; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .controls { display: flex; gap: 12px; justify-content: center; margin-bottom: 44px; flex-wrap: wrap; }
+
+  .log-wrap { text-align: left; }
+  .log-wrap h2 {
+    font-size: 13px; font-weight: 600; letter-spacing: 3px;
+    text-transform: uppercase; color: #8a8578; margin-bottom: 12px;
+  }
+  #log {
+    list-style: none;
+    background: #0d0d0d;
+    border: 1px solid #222;
+    border-radius: 12px;
+    padding: 8px 16px;
+    max-height: 220px;
+    overflow-y: auto;
+    font-size: 13.5px;
+    color: #b8b2a3;
+    font-variant-numeric: tabular-nums;
+  }
+  #log li { padding: 6px 0; border-bottom: 1px solid #1a1a1a; }
+  #log li:last-child { border-bottom: none; }
+  .hint { font-size: 13px; color: #6b665a; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div class="clock" id="clock">--:--</div>
+
+<main>
+  <h1>Focus Mirror</h1>
+
+  <div class="status-card">
+    <div class="dot unknown" id="dot"></div>
+    <div>
+      <div class="status-text" id="statusText">Not connected</div>
+      <div class="status-sub" id="statusSub">Connect your Arduino to begin</div>
+    </div>
+  </div>
+  <div class="distance" id="distance">Distance: —</div>
+
+  <div class="timer">
+    <div class="time" id="timeDisplay">25:00</div>
+    <div class="timer-state" id="timerState">Focus session ready</div>
+    <div class="timer-controls">
+      <button id="startBtn" class="primary">Start</button>
+      <button id="pauseBtn">Pause</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="connectBtn" class="primary">Connect Arduino</button>
+    <button id="demoBtn">Demo mode: off</button>
+  </div>
+  <p class="hint">USB option needs Chrome/Edge over HTTPS or localhost. WiFi option: flash the ESP32 sketch and run server.js.</p>
+
+  <div class="log-wrap">
+    <h2>Event log</h2>
+    <ul id="log"></ul>
+  </div>
+</main>
+
+<script>
+  const el = id => document.getElementById(id);
+
+  /* ---------- state ---------- */
+  let port = null, reader = null, connected = false;
+  let demoMode = false, demoTimer = null;
+  let wasPresent = null, lastDistance = null;
+
+  /* ---------- focus timer ---------- */
+  const FOCUS_MS = 25 * 60 * 1000;
+  let remaining = FOCUS_MS, timerRunning = false, endAt = 0, autoPaused = false;
+
+  function renderTime() {
+    const s = Math.ceil(remaining / 1000);
+    el("timeDisplay").textContent =
+      String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  }
+  setInterval(() => {
+    if (!timerRunning) return;
+    remaining = endAt - Date.now();
+    if (remaining <= 0) {
+      remaining = 0; timerRunning = false;
+      el("timerState").textContent = "Focus session complete!";
+      log("Focus session complete");
+    }
+    renderTime();
+  }, 200);
+
+  function startTimer() {
+    if (timerRunning) return;
+    if (remaining <= 0) remaining = FOCUS_MS;
+    endAt = Date.now() + remaining;
+    timerRunning = true; autoPaused = false;
+    el("timerState").textContent = "Focusing…";
+    log("Focus timer started");
+    renderTime();
+  }
+  function pauseTimer() {
+    if (!timerRunning) return;
+    remaining = endAt - Date.now();
+    timerRunning = false;
+    el("timerState").textContent = "Paused";
+    renderTime();
+  }
+  function resumeTimer() {
+    if (timerRunning || remaining <= 0) return;
+    endAt = Date.now() + remaining;
+    timerRunning = true;
+    el("timerState").textContent = "Focusing…";
+    renderTime();
+  }
+  function resetTimer() {
+    timerRunning = false; remaining = FOCUS_MS; autoPaused = false;
+    renderTime();
+    el("timerState").textContent = "Focus session ready";
+    log("Focus timer reset");
+  }
+
+  el("startBtn").addEventListener("click", startTimer);
+  el("pauseBtn").addEventListener("click", pauseTimer);
+  el("resetBtn").addEventListener("click", resetTimer);
+
+  /* ---------- presence handling ---------- */
+  function log(msg) {
+    const li = document.createElement("li");
+    li.textContent = new Date().toLocaleTimeString() + " — " + msg;
+    el("log").prepend(li);
+  }
+
+  function setStatus(p) {
+    const dot = el("dot");
+    dot.className = "dot " + (p === null ? "unknown" : p ? "on" : "off");
+    if (!connected && !demoMode) {
+      el("statusText").textContent = "Not connected";
+      el("statusSub").textContent = "Connect your Arduino to begin";
+    } else if (p === null) {
+      el("statusText").textContent = "Waiting for sensor…";
+      el("statusSub").textContent = "Reading distance from Arduino";
+    } else if (p) {
+      el("statusText").textContent = "You're at your desk";
+      el("statusSub").textContent = "Focus mode active";
+    } else {
+      el("statusText").textContent = "Desk is empty";
+      el("statusSub").textContent = "Step away detected";
+    }
+    el("distance").textContent =
+      lastDistance != null ? "Distance: " + lastDistance + " cm" : "Distance: —";
+  }
+
+  function onPresence(p, dist) {
+    if (dist != null && dist > 0) lastDistance = dist;
+    if (p !== wasPresent) {
+      if (p) {
+        log("Person at desk" + (lastDistance != null ? " (" + lastDistance + " cm)" : ""));
+        if (autoPaused) { resumeTimer(); autoPaused = false; log("Focus timer resumed automatically"); }
+      } else if (wasPresent !== null) {
+        log("Desk empty — person stepped away");
+        if (timerRunning) { pauseTimer(); autoPaused = true; log("Focus timer paused automatically"); }
+      }
+      wasPresent = p;
+    }
+    setStatus(p);
+  }
+
+  /* ---------- Web Serial (USB option) ---------- */
+  async function readLoop() {
+    const decoder = new TextDecoderStream();
+    port.readable.pipeTo(decoder.writable);
+    reader = decoder.readable.getReader();
+    let buffer = "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let idx;
+        while ((idx = buffer.indexOf("\n")) >= 0) {
+          handleLine(buffer.slice(0, idx).trim());
+          buffer = buffer.slice(idx + 1);
+        }
+      }
+    } catch (err) {
+      log("Serial read error: " + err.message);
+    }
+    if (connected) handleDisconnect();
+  }
+
+  function handleLine(line) {
+    if (line.startsWith("DISTANCE:")) {
+      const d = parseInt(line.slice(9), 10);
+      if (!isNaN(d)) { lastDistance = d > 0 ? d : null; setStatus(wasPresent); }
+    } else if (line.startsWith("STATUS:")) {
+      onPresence(line.slice(7).trim() === "1", lastDistance);
+    }
+  }
+
+  async function connect() {
+    if (!("serial" in navigator)) {
+      alert("Web Serial is not supported in this browser.\nUse Chrome or Edge, over HTTPS or localhost.");
+      return;
+    }
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      connected = true;
+      el("connectBtn").textContent = "Disconnect";
+      log("Arduino connected over USB");
+      readLoop();
+    } catch (err) {
+      log("Connection failed: " + err.message);
+    }
+  }
+
+  async function handleDisconnect() {
+    try { if (reader) await reader.cancel(); } catch (e) {}
+    try { if (port) await port.close(); } catch (e) {}
+    connected = false; port = null; reader = null;
+    el("connectBtn").textContent = "Connect Arduino";
+    setStatus(null);
+    log("Arduino disconnected");
+  }
+
+  el("connectBtn").addEventListener("click", () => connected ? handleDisconnect() : connect());
+  if ("serial" in navigator) {
+    navigator.serial.addEventListener("disconnect", (e) => {
+      if (connected && port === e.target) handleDisconnect();
+    });
+  } else {
+    el("connectBtn").disabled = true;
+    log("Web Serial unsupported — use Chrome/Edge, or try Demo mode");
+  }
+
+  /* ---------- demo mode (no hardware needed) ---------- */
+  el("demoBtn").addEventListener("click", () => {
+    demoMode = !demoMode;
+    el("demoBtn").textContent = "Demo mode: " + (demoMode ? "on" : "off");
+    if (demoMode) {
+      log("Demo mode enabled — simulating sensor (toggles every ~7 s)");
+      let p = true;
+      const step = () => onPresence(p, p ? 35 + Math.round(Math.random() * 15) : 120 + Math.round(Math.random() * 60));
+      step();
+      demoTimer = setInterval(() => { p = !p; step(); }, 7000);
+    } else {
+      clearInterval(demoTimer); demoTimer = null;
+      log("Demo mode off");
+      if (!connected) setStatus(null);
+    }
+  });
+
+  /* ---------- clock ---------- */
+  function tickClock() {
+    const d = new Date();
+    el("clock").textContent =
+      String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+  tickClock();
+  setInterval(tickClock, 10000);
+
+  renderTime();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Desk Sensor widget — test page</title>
+<style>
+  body {
+    background: #0b0d10; color: #e8e6e1;
+    font-family: system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 48px 16px; gap: 24px;
+  }
+  h1 { font-weight: 300; letter-spacing: 3px; text-transform: uppercase; font-size: 16px; color: #c9b98a; }
+  #events {
+    width: 100%; max-width: 340px; max-height: 200px; overflow: auto;
+    background: #101418; border: 1px solid #2a2f36; border-radius: 12px;
+    padding: 12px 16px; font-size: 13px; color: #8b8f96;
+    font-variant-numeric: tabular-nums;
+  }
+  #events div { padding: 4px 0; border-bottom: 1px solid #1a1e24; }
+</style>
+</head>
+<body>
+  <h1>Desk Sensor test</h1>
+  <p style="color:#7d8090;font-size:14px;margin-top:-8px">Toggle the feature on, then connect your Arduino (Chrome/Edge).</p>
+  <div id="desk-sensor"></div>
+  <div id="events"></div>
+
+  <script src="desk-sensor.js"></script>
+  <script>
+    DeskSensor.init(document.getElementById("desk-sensor"));
+
+    // Log every presence event the widget emits
+    document.addEventListener("deskpresence", (e) => {
+      const box = document.getElementById("events");
+      const div = document.createElement("div");
+      div.textContent = new Date().toLocaleTimeString() + " — " + JSON.stringify(e.detail);
+      box.prepend(div);
+    });
+  </script>
+</body>
+</html>
